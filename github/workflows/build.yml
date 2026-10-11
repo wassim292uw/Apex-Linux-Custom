@@ -1,0 +1,83 @@
+name: Build Custom OS
+
+on:
+  workflow_dispatch: # يتيح لك تشغيل البناء بزر واحد متى أردت
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Download and Modify System
+      run: |
+        sudo apt update
+        # 1. تحميل قاعدة أوبونتو المصغرة
+        wget https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-amd64.tar.gz -O ubuntu-base.tar.gz
+        
+        # 2. إنشاء مجلد النظام وفك الضغط
+        mkdir rootfs
+        sudo tar -xzf ubuntu-base.tar.gz -C rootfs
+        
+        # 3. إعداد البيئة وتعديل النظام من الداخل
+        sudo mount --bind /dev rootfs/dev
+        sudo mount --bind /proc rootfs/proc
+        sudo mount --bind /sys rootfs/sys
+        
+        sudo chroot rootfs /bin/bash -c "
+          apt update && apt install -y xfce4 plank chromium-browser xterm
+          mkdir -p /root/Desktop
+        "
+        
+        # 4. تنظيف وإعادة ضغط النظام المعدل
+        sudo umount rootfs/dev rootfs/proc rootfs/sys
+        sudo tar -czvf My_Custom_OS.tar.gz -C rootfs .
+
+    - name: Upload Finished OS
+      uses: actions/upload-artifact@v3
+      with:
+        name: Custom-OS-Package
+        path: My_Custom_OS.tar.gzEnternname: Build Custom OS
+
+on:
+  workflow_dispatch: # يتيح لك تشغيل البناء بزر واحد متى أردت
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Download and Modify System
+      run: |
+        sudo apt update
+        # 1. تحميل قاعدة أوبونتو المصغرة
+        wget https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-amd64.tar.gz -O ubuntu-base.tar.gz
+        
+        # 2. إنشاء مجلد النظام وفك الضغط
+        mkdir rootfs
+        sudo tar -xzf ubuntu-base.tar.gz -C rootfs
+        
+        # 3. إعداد البيئة وتعديل النظام من الداخل
+        sudo mount --bind /dev rootfs/dev
+        sudo mount --bind /proc rootfs/proc
+        sudo mount --bind /sys rootfs/sys
+        
+        sudo chroot rootfs /bin/bash -c "
+          apt update && apt install -y xfce4 plank chromium-browser xterm
+          mkdir -p /root/Desktop
+        "
+        
+        # 4. تنظيف وإعادة ضغط النظام المعدل
+        sudo umount rootfs/dev rootfs/proc rootfs/sys
+        sudo tar -czvf My_Custom_OS.tar.gz -C rootfs .
+
+    - name: Upload Finished OS
+      uses: actions/upload-artifact@v3
+      with:
+        name: Custom-OS-Package
+        path: My_Custom_OS.tar.gzEnter
