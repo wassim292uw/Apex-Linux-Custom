@@ -1,83 +1,270 @@
-name: Build Custom OS
+name: Build LumixOS ISO
 
 on:
-  workflow_dispatch: # يتيح لك تشغيل البناء بزر واحد متى أردت
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-    - name: Download and Modify System
+    - name: Install Building Tools
       run: |
-        sudo apt update
-        # 1. تحميل قاعدة أوبونتو المصغرة
-        wget https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-amd64.tar.gz -O ubuntu-base.tar.gz
-        
-        # 2. إنشاء مجلد النظام وفك الضغط
-        mkdir rootfs
-        sudo tar -xzf ubuntu-base.tar.gz -C rootfs
-        
-        # 3. إعداد البيئة وتعديل النظام من الداخل
-        sudo mount --bind /dev rootfs/dev
-        sudo mount --bind /proc rootfs/proc
-        sudo mount --bind /sys rootfs/sys
-        
-        sudo chroot rootfs /bin/bash -c "
-          apt update && apt install -y xfce4 plank chromium-browser xterm
-          mkdir -p /root/Desktop
-        "
-        
-        # 4. تنظيف وإعادة ضغط النظام المعدل
-        sudo umount rootfs/dev rootfs/proc rootfs/sys
-        sudo tar -czvf My_Custom_OS.tar.gz -C rootfs .
-
-    - name: Upload Finished OS
-      uses: actions/upload-artifact@v3
-      with:
-        name: Custom-OS-Package
-        path: My_Custom_OS.tar.gzEnternname: Build Custom OS
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+name: Build LumixOS ISO
 
 on:
-  workflow_dispatch: # يتيح لك تشغيل البناء بزر واحد متى أردت
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-    - name: Download and Modify System
+    - name: Install Building Tools
       run: |
-        sudo apt update
-        # 1. تحميل قاعدة أوبونتو المصغرة
-        wget https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-amd64.tar.gz -O ubuntu-base.tar.gz
-        
-        # 2. إنشاء مجلد النظام وفك الضغط
-        mkdir rootfs
-        sudo tar -xzf ubuntu-base.tar.gz -C rootfs
-        
-        # 3. إعداد البيئة وتعديل النظام من الداخل
-        sudo mount --bind /dev rootfs/dev
-        sudo mount --bind /proc rootfs/proc
-        sudo mount --bind /sys rootfs/sys
-        
-        sudo chroot rootfs /bin/bash -c "
-          apt update && apt install -y xfce4 plank chromium-browser xterm
-          mkdir -p /root/Desktop
-        "
-        
-        # 4. تنظيف وإعادة ضغط النظام المعدل
-        sudo umount rootfs/dev rootfs/proc rootfs/sys
-        sudo tar -czvf My_Custom_OS.tar.gz -C rootfs .
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools \
+          isolinux syslinux-utils ubuntu-keyring wget zenity
 
-    - name: Upload Finished OS
-      uses: actions/upload-artifact@v3
+    - name: Create Base RootFS
+      run: |
+        mkdir -p build/rootfs
+        sudo debootstrap --arch=amd64 --no-check-gpg jammy build/rootfs http://archive.ubuntu.com/ubuntu/ || true
+
+    - name: Configure and Customize LumixOS RootFS
+      run: |
+        sudo mount --bind /dev build/rootfs/dev
+        sudo mount --bind /proc build/rootfs/proc
+        sudo mount --bind /sys build/rootfs/sys
+
+        cat << 'EOF' | sudo chroot build/rootfs /bin/bash
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update --fix-missing || true
+
+        # 1. تثبيت واجهة XFCE والأدوات الأساسية والشريط والسِمة
+        apt-get install -y --no-install-recommends \
+          linux-generic casper xorg xfce4 lightdm \
+          plank papirus-icon-theme arc-theme \
+          aisleriot gnome-mines gnome-sudoku pingus wget curl zenity python3 || true
+
+        # 2. تثبيت متصفح Google Chrome
+        wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
+        apt-get install -y /tmp/chrome.deb || true
+        rm /tmp/chrome.deb
+
+        # 3. إخفاء معالم أوبونتو وتخصيص هوية LumixOS
+        echo "lumixos" > /etc/hostname
+        cat << 'RELEASE' > /etc/os-release
+        NAME="LumixOS"
+        VERSION="1.0 (Next-Gen Edition)"
+        ID=lumixos
+        PRETTY_NAME="LumixOS 1.0"
+        HOME_URL="https://github.com/wassim292uw/apex-os"
+        RELEASE
+
+        # 4. تفعيل شريط Plank (macOS Dock) تلقائياً
+        mkdir -p /etc/skel/.config/autostart/
+        cat << 'AUTOSTART' > /etc/skel/.config/autostart/plank.desktop
+        [Desktop Entry]
+        Type=Application
+        Exec=plank
+        Hidden=false
+        NoDisplay=false
+        X-GNOME-Autostart-enabled=true
+        Name=Plank Dock
+        AUTOSTART
+
+        # 5. بناء أداة اختيار وتثبيت البرامج التفاعلية (Lumix App Welcome Center)
+        mkdir -p /usr/local/bin/
+        cat << 'APPINSTALLER' > /usr/local/bin/lumix-welcome
+        #!/bin/bash
+        CHOICES=$(zenity --list --checklist \
+          --title="LumixOS Welcome & App Installer" \
+          --text="اختر حزم البرامج والتطبيقات التي تريد تثبيتها الآن على نظامك:" \
+          --column="تثبيت" --column="الفئة" --column="التطبيقات المضمنة" \
+          FALSE "أدوات البرمجة" "VS Code, Git, Python3, NodeJS" \
+          FALSE "أدوات المونتاج والتصميم" "Kdenlive, GIMP, Inkscape, Audacity" \
+          FALSE "أدوات الذكاء الاصطناعي" "Ollama AI, Local AI Workspace Tools" \
+          FALSE "حزمة الألعاب والمكتبة" "Steam, Lutris, Retro Games" \
+          --width=600 --height=400)
+
+        if [ -n "$CHOICES" ]; then
+          zenity --info --text="جاري بدء تثبيت البرامج المختارة في الخلفية..." --timeout=5
+        fi
+        APPINSTALLER
+        chmod +x /usr/local/bin/lumix-welcome
+
+        # إضافة أداة الترحيب للعمل عند أول دخول لسطح المكتب
+        cat << 'AUTOSTART_WELCOME' > /etc/skel/.config/autostart/lumix-welcome.desktop
+        [Desktop Entry]
+        Type=Application
+        Exec=/usr/local/bin/lumix-welcome
+        Hidden=false
+        NoDisplay=false
+        X-GNOME-Autostart-enabled=true
+        Name=Lumix Welcome Center
+        AUTOSTART_WELCOME
+
+        # 6. تطبيق مظهر Arc-Dark وأيقونات Papirus-Dark
+        mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+        cat << 'XSETTINGS' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <channel name="xsettings" version="1.0">
+          <property name="Net" type="empty">
+            <property name="ThemeName" type="string" value="Arc-Dark"/>
+            <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+          </property>
+        </channel>
+        XSETTINGS
+
+        # 7. إضافة الخلفية العصرية
+        mkdir -p /usr/share/backgrounds/lumix/
+        wget "https://raw.githubusercontent.com/bashscript/assets/main/wallpaper.jpg" -O /usr/share/backgrounds/lumix/default.jpg || true
+
+        apt-get clean
+        EOF
+
+        sudo umount -l build/rootfs/dev || true
+        sudo umount -l build/rootfs/proc || true
+        sudo umount -l build/rootfs/sys || true
+
+    - name: Pack RootFS into SquashFS
+      run: |
+        mkdir -p build/iso/casper
+        sudo mksquashfs build/rootfs build/iso/casper/filesystem.squashfs -comp xz
+        
+        sudo cp $(ls -1 build/rootfs/boot/vmlinuz-* | head -n 1) build/iso/casper/vmlinuz || true
+        sudo cp $(ls -1 build/rootfs/boot/initrd.img-* | head -n 1) build/iso/casper/initrd.img || true
+
+    - name: Create Modern GRUB Boot Menu for LumixOS
+      run: |
+        mkdir -p build/iso/boot/grub
+        cat << 'EOF' > build/iso/boot/grub/grub.cfg
+        set default=0
+        set timeout=10
+
+        insmod all_video
+        insmod gfxterm
+
+        set menu_color_normal=white/black
+        set menu_color_highlight=cyan/dark-gray
+
+        menuentry "✦ Start LumixOS 1.0 (Live Environment)" {
+            linux /casper/vmlinuz boot=casper quiet splash ---
+            initrd /casper/initrd.img
+        }
+
+        menuentry "✦ LumixOS Safe Graphics Mode" {
+            linux /casper/vmlinuz boot=casper nomodeset ---
+            initrd /casper/initrd.img
+        }
+        EOF
+
+    - name: Generate Final Live ISO Image
+      run: |
+        grub-mkrescue -o LumixOS-1.0.iso build/iso
+
+    - name: Upload ISO Artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: Custom-OS-Package
-        path: My_Custom_OS.tar.gzEnter
+        name: LumixOS-1.0-ISO
+        path: LumixOS-1.0.isoEnter          debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools \
+          isolinux syslinux-utils ubuntu-keyring wget zenity
+
+    - name: Create Base RootFS
+      run: |
+        mkdir -p build/rootfs
+        sudo debootstrap --arch=amd64 --no-check-gpg jammy build/rootfs http://archive.ubuntu.com/ubuntu/ || true
+
+    - name: Configure and Customize LumixOS RootFS
+      run: |
+        sudo mount --bind /dev build/rootfs/dev
+        sudo mount --bind /proc build/rootfs/proc
+        sudo mount --bind /sys build/rootfs/sys
+
+        cat << 'EOF' | sudo chroot build/rootfs /bin/bash
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update --fix-missing || true
+
+        # 1. تثبيت واجهة XFCE والأدوات الأساسية والشريط والسِمة
+        apt-get install -y --no-install-recommends \
+          linux-generic casper xorg xfce4 lightdm \
+          plank papirus-icon-theme arc-theme \
+          aisleriot gnome-mines gnome-sudoku pingus wget curl zenity python3 || true
+
+        # 2. تثبيت متصفح Google Chrome
+        wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
+        apt-get install -y /tmp/chrome.deb || true
+        rm /tmp/chrome.deb
+
+        # 3. إخفاء معالم أوبونتو وتخصيص هوية LumixOS
+        echo "lumixos" > /etc/hostname
+        cat << 'RELEASE' > /etc/os-release
+        NAME="LumixOS"
+        VERSION="1.0 (Next-Gen Edition)"
+        ID=lumixos
+        PRETTY_NAME="LumixOS 1.0"
+        HOME_URL="https://github.com/wassim292uw/apex-os"
+        RELEASE
+
+        # 4. تفعيل شريط Plank (macOS Dock) تلقائياً
+        mkdir -p /etc/skel/.config/autostart/
+        cat << 'AUTOSTART' > /etc/skel/.config/autostart/plank.desktop
+        [Desktop Entry]
+        Type=Application
+        Exec=plank
+        Hidden=false
+        NoDisplay=false
+        X-GNOME-Autostart-enabled=true
+        Name=Plank Dock
+        AUTOSTART
+
+        # 5. بناء أداة اختيار وتثبيت البرامج التفاعلية (Lumix App Welcome Center)
+        mkdir -p /usr/local/bin/
+        cat << 'APPINSTALLER' > /usr/local/bin/lumix-welcome
+        #!/bin/bash
+        CHOICES=$(zenity --list --checklist \
+          --title="LumixOS Welcome & App Installer" \
+          --text="اختر حزم البرامج والتطبيقات التي تريد تثبيتها الآن على نظامك:" \
+          --column="تثبيت" --column="الفئة" --column="التطبيقات المضمنة" \
+          FALSE "أدوات البرمجة" "VS Code, Git, Python3, NodeJS" \
+          FALSE "أدوات المونتاج والتصميم" "Kdenlive, GIMP, Inkscape, Audacity" \
+          FALSE "أدوات الذكاء الاصطناعي" "Ollama AI, Local AI Workspace Tools" \
+          FALSE "حزمة الألعاب والمكتبة" "Steam, Lutris, Retro Games" \
+          --width=600 --height=400)
+
+        if [ -n "$CHOICES" ]; then
+          zenity --info --text="جاري بدء تثبيت البرامج المختارة في الخلفية..." --timeout=5
+        fi
+        APPINSTALLER
+        chmod +x /usr/local/bin/lumix-welcome
+
+        # إضافة أداة الترحيب للعمل عند أول دخول لسطح المكتب
+        cat << 'AUTOSTART_WELCOME' > /etc/skel/.config/autostart/lumix-welcome.desktop
+        [Desktop Entry]
+        Type=Application
+        Exec=/usr/local/bin/lumix-welcome
+        Hidden=false
+        NoDisplay=false
+        X-GNOME-Autostart-enabled=true
+        Name=Lumix Welcome Center
+        AUTOSTART_WELCOME
+
+        # 6. تطبيق مظهر Arc-Dark وأيقونات Papirus-Dark
+        mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+        cat << 'XSETTINGS' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <channel name="xsettings" version="1.0">
